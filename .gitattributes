@@ -1,0 +1,6 @@
+# Normalize all text files to LF line endings
+* text=auto eol=lf
+
+# Shell scripts and hooks must always be LF
+*.sh text eol=lf
+.githooks/* text eol=lf
