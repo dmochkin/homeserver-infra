@@ -1,0 +1,28 @@
+# Decrypted secrets and keys: never commit
+*.dec.yaml
+*.decrypted.*
+keys.txt
+*.agekey
+.env
+.env.*
+!.env.example
+
+# Only encrypted files are allowed in secrets/ and its subfolders
+secrets/**
+!secrets/**/
+!secrets/**/*.enc.yaml
+
+# Kubernetes access
+kubeconfig
+*.kubeconfig
+k3s.yaml
+
+# Ansible
+*.retry
+.ansible/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
