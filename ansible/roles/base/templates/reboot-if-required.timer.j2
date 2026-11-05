@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/base).
+[Unit]
+Description=Weekly check for a required reboot
+
+[Timer]
+OnCalendar={{ reboot_schedule }} {{ server_timezone }}
+# A missed run is skipped, so the server never reboots right after starting up.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

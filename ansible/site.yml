@@ -1,0 +1,28 @@
+- name: Configure the home server
+  hosts: homeserver
+
+  pre_tasks:
+    # The firewall allows SSH only over Tailscale. Refuse to run over any other
+    # connection, so the playbook cannot lock out the session it runs in.
+    - name: Read the address this SSH session arrived on
+      ansible.builtin.command: printenv SSH_CONNECTION
+      become: false
+      register: ssh_connection
+      changed_when: false
+      check_mode: false
+
+    - name: Check the session runs over Tailscale
+      vars:
+        session_address: "{{ ssh_connection.stdout.split(' ')[2] }}"
+        admin_address: "{{ ansible_facts.get(admin_interface, {}).get('ipv4', {}).get('address', 'none') }}"
+      ansible.builtin.assert:
+        that:
+          - session_address == admin_address
+        fail_msg: >-
+          This session arrived on {{ session_address }}, not on {{ admin_interface }} ({{ admin_address }}).
+          Point the "homeserver" entry in ~/.ssh/config at the server's Tailscale name and run again.
+        quiet: true
+
+  roles:
+    - base
+    - firewall

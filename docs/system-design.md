@@ -114,7 +114,7 @@ Runners act only on trusted events: tag pushes and branches from the owner. Pull
 ## Security baseline
 
 - No inbound ports from the internet; the firewall denies all incoming traffic except SSH on the Tailscale interface.
-- Automatic security updates, with reboots Sunday at 4am Toronto time.
+- Automatic security updates every day; when an update requires a reboot, it happens Sunday at 4am Toronto time.
 - fail2ban on SSH.
 - One namespace per app, with CPU and memory limits.
 - gitleaks before each commit and push, and in CI.

@@ -1,0 +1,29 @@
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+# The allow rule is added before the firewall is turned on, so the SSH session
+# running this playbook (over Tailscale, checked in site.yml) is never cut off.
+- name: Allow SSH on the Tailscale interface only
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: "{{ admin_interface }}"
+    port: "22"
+    proto: tcp
+    comment: SSH over Tailscale
+
+- name: Deny all other incoming traffic
+  community.general.ufw:
+    default: deny
+    direction: incoming
+
+- name: Allow all outgoing traffic
+  community.general.ufw:
+    default: allow
+    direction: outgoing
+
+- name: Turn on the firewall
+  community.general.ufw:
+    state: enabled

@@ -1,0 +1,99 @@
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - sudo # provides sudo.ws, which Ansible uses (see ansible.cfg)
+      - unattended-upgrades
+      - fail2ban
+      - python3-systemd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# SSH
+
+- name: Allow SSH logins with keys only
+  ansible.builtin.copy:
+    src: ssh-keys-only.conf
+    # Loaded before the installer's 50-cloud-init.conf; for each setting, sshd uses the first value it reads.
+    dest: /etc/ssh/sshd_config.d/10-keys-only.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload SSH
+
+- name: Check the SSH configuration is valid
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  check_mode: false
+
+# Time
+
+- name: Set the time zone
+  community.general.timezone:
+    name: "{{ server_timezone }}"
+
+# Automatic updates
+
+- name: Install security updates automatically every day
+  ansible.builtin.copy:
+    src: 20auto-upgrades
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Leave reboots to the weekly reboot timer
+  ansible.builtin.copy:
+    src: 52-no-automatic-reboot
+    dest: /etc/apt/apt.conf.d/52-no-automatic-reboot
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the reboot-if-required service
+  ansible.builtin.copy:
+    src: reboot-if-required.service
+    dest: /etc/systemd/system/reboot-if-required.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the weekly reboot timer
+  ansible.builtin.template:
+    src: reboot-if-required.timer.j2
+    dest: /etc/systemd/system/reboot-if-required.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Load new systemd units
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the weekly reboot timer
+  ansible.builtin.systemd_service:
+    name: reboot-if-required.timer
+    enabled: true
+    state: started
+  # In a dry run the unit and package are not installed yet, so there is nothing to enable.
+  when: not ansible_check_mode
+
+# fail2ban
+
+- name: Ban addresses that keep failing SSH logins
+  ansible.builtin.copy:
+    src: fail2ban-sshd.local
+    dest: /etc/fail2ban/jail.d/sshd.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Enable fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+    state: started
+  # In a dry run the unit and package are not installed yet, so there is nothing to enable.
+  when: not ansible_check_mode
