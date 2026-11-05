@@ -1,0 +1,30 @@
+# Runs on the admin machine with kubectl access over Tailscale (~/.kube/config, written by the k3s role).
+# Helm stores the release, including the tunnel token, as a Kubernetes Secret, encrypted at rest by k3s.
+
+- name: Connect the cluster to Cloudflare Tunnel (cloudflared)
+  kubernetes.core.helm:
+    name: cloudflared
+    chart_ref: cloudflare-tunnel-remote
+    chart_repo_url: https://cloudflare.github.io/helm-charts
+    chart_version: "{{ cloudflared_chart_version }}"
+    release_namespace: cloudflared
+    create_namespace: true
+    wait: true
+    values:
+      cloudflare:
+        tunnel_token: "{{ secrets.cloudflare_tunnel_token }}"
+      image:
+        tag: "{{ cloudflared_version }}"
+      replicaCount: 2
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+  delegate_to: localhost
+  become: false
+  no_log: true
+  # A dry run before k3s is installed has no cluster to check against.
+  when: not (ansible_check_mode and k3s_installed.rc != 0)

@@ -5,3 +5,18 @@ reboot_schedule: "Sun *-*-* 04:00:00"
 
 # SSH is reachable only on this interface.
 admin_interface: tailscale0
+
+# The server's Tailscale (MagicDNS) name, used by kubectl on the admin machine.
+server_tailscale_name: homeserver
+
+# k3s: pinned version; the install script verifies the binary's SHA-256.
+k3s_version: v1.37.2+k3s1
+pod_network: 10.42.0.0/16
+service_network: 10.43.0.0/16
+
+# Cloudflare Tunnel connector, installed from Cloudflare's Helm chart from the admin machine.
+cloudflared_chart_version: 0.1.2
+cloudflared_version: "2026.10.7"
+
+# Hello-world status page at status.<domain>.
+status_page_image: nginxinc/nginx-unprivileged:1.30.6-alpine

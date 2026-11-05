@@ -98,10 +98,17 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
 
 ## 5. Prepare Cloudflare
 
-1. **Tunnel:** in the Cloudflare dashboard, create a Cloudflare Tunnel and copy its token.
-2. **DNS:** for each app subdomain, add a route from `<app>.<domain>` to `http://traefik.kube-system.svc.cluster.local:80`.
+1. **Tunnel:** in the Cloudflare dashboard, go to **Networking → Tunnels** and select **Create a tunnel** (name it, for example, `homeserver`). Don't run the install command it offers; cloudflared runs in the cluster. To get the token of an existing tunnel, open it, select **Add a replica** on the **Overview** tab, and copy the `eyJ…` string from the command. **Refresh token** on the same tab replaces a leaked token.
+2. **Routes:** on the tunnel's **Routes** tab, for each app select **Add route → Published application**: subdomain `<app>`, your domain, service URL `http://traefik.kube-system.svc.cluster.local:80`. The first route is `status`, for the hello-world status page.
 3. **R2:** create a bucket for backups and an API token limited to that bucket.
-4. Add the tunnel token and R2 credentials to the encrypted secrets in this repo (see "Secrets" below). On first setup, create the age key first.
+4. Add the values to `secrets/prod.enc.yaml` (see "Secrets" below). On first setup, create the age key first.
+
+    | Field | Value |
+    | --- | --- |
+    | `cloudflare_tunnel_token` | The tunnel token (`eyJ…`) |
+    | `domain` | The domain, without `https://` or `www.` |
+
+    R2 credentials are added in the backups step.
 
 ## 6. Prepare GitHub runners
 
@@ -110,9 +117,10 @@ For each app repo: **Settings → Actions → Runners → New self-hosted runner
 ## 7. Run Ansible from the admin machine
 
 ```bash
-# once: install Ansible and SOPS
-brew install ansible sops age          # macOS
-# Linux/WSL: sudo apt install -y ansible age; install sops from its GitHub releases
+# once: install Ansible, SOPS, Helm and kubectl
+brew install ansible sops age helm kubectl          # macOS
+# Linux/WSL: sudo apt install -y ansible age; install sops, helm and kubectl from their official releases
+helm plugin install https://github.com/databus23/helm-diff --version v3.15.15   # lets Ansible detect Helm release changes reliably
 
 cd ~/Developer/homeserver-infra/ansible
 ansible-galaxy collection install -r requirements.yml
@@ -129,10 +137,11 @@ The playbook does, in order:
 | Role | What it sets up |
 | --- | --- |
 | base | SSH keys only, no root or password login; time zone; daily automatic security updates; a reboot on Sundays at 4am only when an update requires one; fail2ban on SSH |
-| firewall | Deny all incoming; allow SSH only on the Tailscale interface |
+| firewall | Deny all incoming from the home network and the internet; allow SSH on the Tailscale interface. Tailscale accepts tailnet traffic before ufw, so this does not limit access from your own devices. |
 | docker | Docker Engine for image builds |
-| k3s | Single-node k3s with secrets encryption at rest; kubeconfig reachable over Tailscale only |
-| platform | Namespaces, cloudflared tunnel, Postgres 17, backup and restore-test jobs |
+| k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
+| platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine (Postgres 17, backup and restore-test jobs are added in later steps) |
+| hello_world | A static page at `status.<domain>` that proves Cloudflare → tunnel → Traefik → app works |
 | runners | One GitHub Actions runner service per app repo, the shared build lock, image pruning (keep 3) |
 | secrets | Decrypts SOPS secrets and applies them as Kubernetes Secrets |
 | monitoring | Heartbeat URLs for jobs, backups and deploys |

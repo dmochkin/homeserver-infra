@@ -1,4 +1,4 @@
 creation_rules:
   - path_regex: ^secrets/.*\.enc\.yaml$
     # Public age key of the secrets key pair (safe to commit; the private key stays in Bitwarden)
-    age: <age-public-key>
+    age: age1rgv66mu9vpt984zr3wu0x4d0x6t8wq2wxwczs0g2kwa7qxwhqvns0c60yl
