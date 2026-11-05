@@ -1,0 +1,7 @@
+# Managed by Ansible (roles/base).
+[Unit]
+Description=Reboot if an update requires it
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'if [ -f /run/reboot-required ]; then systemctl reboot; fi'

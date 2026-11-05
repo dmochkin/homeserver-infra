@@ -77,11 +77,24 @@ sudo tailscale up
 - The install script adds the Tailscale package repository and installs Tailscale. It calls `sudo` itself and asks for your password, because it changes system package sources and installs a system service.
 - `sudo tailscale up` connects the machine to your tailnet. `sudo` is needed because it configures the system-wide Tailscale service and network interface.
 
-Open the link it prints, approve the machine in Tailscale, and note its Tailscale name. From now on, connect only over Tailscale:
+Open the link it prints, approve the machine in Tailscale, and note its Tailscale name.
+
+On the admin machine, make sure Tailscale is running, then add this entry to `~/.ssh/config`. Ansible reads the server's address and admin user from it, so neither is kept in the repo.
+
+```
+Host homeserver
+  HostName <tailscale-name>
+  User <admin-user>
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+From now on, connect only over Tailscale:
 
 ```bash
-ssh <admin-user>@<tailscale-name>
+ssh homeserver
 ```
+
+After step 7 the firewall allows SSH only over Tailscale, so an entry that points at the server's home-network address stops working.
 
 ## 5. Prepare Cloudflare
 
@@ -101,18 +114,21 @@ For each app repo: **Settings → Actions → Runners → New self-hosted runner
 brew install ansible sops age          # macOS
 # Linux/WSL: sudo apt install -y ansible age; install sops from its GitHub releases
 
-cd ~/Developer/homeserver-infra
+cd ~/Developer/homeserver-infra/ansible
+ansible-galaxy collection install -r requirements.yml
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt   # the age key from Bitwarden
-ansible-playbook -i inventory/prod.yml site.yml
+ansible-playbook site.yml --ask-become-pass
 ```
 
-On Linux and WSL, `sudo apt install` installs Ansible and age system-wide, which needs administrator rights. On macOS, Homebrew installs without `sudo`.
+- On Linux and WSL, `sudo apt install` installs Ansible and age system-wide, which needs administrator rights. On macOS, Homebrew installs without `sudo`.
+- `--ask-become-pass` asks for the admin user's password on the server. Ansible connects as the admin user with its SSH key, then uses `sudo` on the server for every task, because each one changes system configuration: packages, SSH settings, systemd units and the firewall.
+- The playbook first checks that it is connected over Tailscale and stops if it is not, so the firewall cannot cut off the session it runs in.
 
 The playbook does, in order:
 
 | Role | What it sets up |
 | --- | --- |
-| base | Admin user, SSH keys only, no root or password login, timezone, automatic security updates with Sunday 4am reboots, fail2ban |
+| base | SSH keys only, no root or password login; time zone; daily automatic security updates; a reboot on Sundays at 4am only when an update requires one; fail2ban on SSH |
 | firewall | Deny all incoming; allow SSH only on the Tailscale interface |
 | docker | Docker Engine for image builds |
 | k3s | Single-node k3s with secrets encryption at rest; kubeconfig reachable over Tailscale only |
@@ -126,7 +142,8 @@ The playbook is safe to run again; a second run should report no changes.
 ## 8. Restore data (rebuild only)
 
 ```bash
-ansible-playbook -i inventory/prod.yml restore.yml -e backup=latest
+cd ~/Developer/homeserver-infra/ansible
+ansible-playbook restore.yml -e backup=latest --ask-become-pass
 ```
 
 Downloads the latest backup from R2, decrypts it and restores each database.

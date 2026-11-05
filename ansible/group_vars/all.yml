@@ -1,0 +1,7 @@
+server_timezone: America/Toronto
+
+# Reboot to finish updates only when one is required, Sundays at 4am server time.
+reboot_schedule: "Sun *-*-* 04:00:00"
+
+# SSH is reachable only on this interface.
+admin_interface: tailscale0

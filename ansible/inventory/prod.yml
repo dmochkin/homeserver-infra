@@ -1,0 +1,6 @@
+# The server's address and admin user come from the "homeserver" entry in
+# ~/.ssh/config on the admin machine, so no real address or user name is kept here.
+# See docs/server-setup.md, step 7.
+all:
+  hosts:
+    homeserver:
