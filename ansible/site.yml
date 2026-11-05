@@ -23,6 +23,16 @@
           Point the "homeserver" entry in ~/.ssh/config at the server's Tailscale name and run again.
         quiet: true
 
+    # Decrypted on the admin machine with the age key (SOPS_AGE_KEY_FILE); values never touch the repo.
+    - name: Load the encrypted secrets
+      community.sops.load_vars:
+        file: "{{ playbook_dir }}/../secrets/prod.enc.yaml"
+        name: secrets
+      no_log: true
+
   roles:
     - base
     - firewall
+    - k3s
+    - platform
+    - hello_world

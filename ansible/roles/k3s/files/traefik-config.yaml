@@ -1,0 +1,13 @@
+# Managed by Ansible (roles/k3s).
+# Traefik is reachable only inside the cluster; cloudflared forwards web traffic to it.
+# No LoadBalancer or NodePorts, so no ports are opened on the host.
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    service:
+      spec:
+        type: ClusterIP

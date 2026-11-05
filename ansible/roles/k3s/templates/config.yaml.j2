@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/k3s).
+write-kubeconfig-mode: "0600"
+# Encrypt Kubernetes Secrets at rest. Must be on from the first start.
+secrets-encryption: true
+# Lets kubectl on the admin machine connect by the server's Tailscale name.
+tls-san:
+  - {{ server_tailscale_name }}
+# No built-in load balancer: nothing in the cluster binds ports on the host.
+# Web traffic reaches Traefik only through Cloudflare Tunnel inside the cluster.
+disable:
+  - servicelb

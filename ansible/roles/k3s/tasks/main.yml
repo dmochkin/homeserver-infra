@@ -1,0 +1,123 @@
+# Firewall rules first, so the cluster can reach its own API as soon as it starts.
+
+- name: Allow the Kubernetes API on the Tailscale interface only
+  community.general.ufw:
+    rule: allow
+    direction: in
+    interface: "{{ admin_interface }}"
+    port: "6443"
+    proto: tcp
+    comment: Kubernetes API over Tailscale
+
+- name: Allow traffic from pods to the host
+  community.general.ufw:
+    rule: allow
+    src: "{{ pod_network }}"
+    comment: k3s pods
+
+- name: Allow traffic from cluster services to the host
+  community.general.ufw:
+    rule: allow
+    src: "{{ service_network }}"
+    comment: k3s services
+
+# Configuration
+
+- name: Create the k3s configuration folder
+  ansible.builtin.file:
+    path: /etc/rancher/k3s
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the k3s configuration
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart k3s
+
+- name: Create the folder k3s deploys manifests from
+  ansible.builtin.file:
+    path: /var/lib/rancher/k3s/server/manifests
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Keep Traefik reachable only inside the cluster
+  ansible.builtin.copy:
+    src: traefik-config.yaml
+    dest: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+# Install or upgrade
+
+- name: Read the installed k3s version
+  ansible.builtin.command: k3s --version
+  register: k3s_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Download the k3s install script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/lib/k3s-install.sh
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install k3s {{ k3s_version }}
+  ansible.builtin.command: /usr/local/lib/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+  when: k3s_version not in k3s_installed.stdout | default('')
+  changed_when: true
+
+- name: Start k3s and start it at boot
+  ansible.builtin.systemd_service:
+    name: k3s
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Wait for the node to be ready
+  ansible.builtin.command: k3s kubectl wait --for=condition=Ready node --all --timeout=180s
+  changed_when: false
+  when: not ansible_check_mode
+
+# kubectl access from the admin machine, over Tailscale
+
+- name: Read the cluster admin kubeconfig
+  ansible.builtin.slurp:
+    src: /etc/rancher/k3s/k3s.yaml
+  register: k3s_kubeconfig
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Create ~/.kube on the admin machine
+  ansible.builtin.file:
+    path: ~/.kube
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when: not ansible_check_mode
+
+- name: Save the kubeconfig on the admin machine, pointed at the Tailscale name
+  ansible.builtin.copy:
+    content: >-
+      {{ k3s_kubeconfig.content | b64decode
+         | replace('https://127.0.0.1:6443', 'https://' ~ server_tailscale_name ~ ':6443') }}
+    dest: ~/.kube/config
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: not ansible_check_mode

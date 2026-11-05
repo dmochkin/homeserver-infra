@@ -38,7 +38,7 @@ flowchart LR
 | --- | --- |
 | Home server | Asus Chromebox 3 (CN65): i7-8550U (4 cores / 8 threads), 16 GB RAM, SATA SSD, MrChromebox UEFI firmware; Ubuntu Server 26.04 LTS |
 | k3s | Single-node Kubernetes; secrets encrypted at rest |
-| Traefik | Ingress built into k3s; routes each subdomain to its app |
+| Traefik | Ingress built into k3s; routes each subdomain to its app; reachable only inside the cluster |
 | cloudflared | Outbound tunnel from the server to Cloudflare; replaces open ports and on-server certificates |
 | Cloudflare | DNS for the domain, proxy, HTTPS for visitors, R2 object storage for backups |
 | Postgres 17 | One shared instance; one database and one user per app |
@@ -62,8 +62,10 @@ The home router has no port forwarding. The home IP address is never exposed.
 ## Admin access
 
 - SSH, `kubectl` and Ansible connect only over Tailscale.
+- Tailscale accepts all traffic arriving over the tailnet before ufw evaluates it, so devices on the tailnet can reach any port the server listens on. Only the owner's devices are on the tailnet; Tailscale access rules (ACLs) are where to restrict it further.
 - SSH uses keys only; root and password logins are disabled.
-- The Kubernetes API is reachable only over Tailscale.
+- The Kubernetes API is reachable only over Tailscale (port 6443 on the Tailscale interface).
+- k3s's built-in load balancer is off and Traefik has no host ports, so no cluster service listens on the server's network.
 
 ## Deploy flow
 
@@ -113,7 +115,7 @@ Runners act only on trusted events: tag pushes and branches from the owner. Pull
 
 ## Security baseline
 
-- No inbound ports from the internet; the firewall denies all incoming traffic except SSH on the Tailscale interface.
+- No inbound ports from the internet: the home router forwards no ports, and ufw denies all incoming traffic from the home network and the internet. Its rules for SSH and the Kubernetes API on the Tailscale interface still apply if Tailscale's own firewall rules are turned off.
 - Automatic security updates every day; when an update requires a reboot, it happens Sunday at 4am Toronto time.
 - fail2ban on SSH.
 - One namespace per app, with CPU and memory limits.
