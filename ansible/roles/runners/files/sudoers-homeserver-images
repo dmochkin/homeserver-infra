@@ -1,0 +1,3 @@
+# Managed by Ansible (roles/runners).
+# The runner user may import and prune app images in k3s, and nothing else as root.
+github-runner ALL=(root) NOPASSWD: /usr/local/sbin/homeserver-images

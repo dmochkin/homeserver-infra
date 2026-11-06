@@ -1,0 +1,197 @@
+# Helm on the server, for the deploy script.
+
+- name: Download Helm {{ helm_version }}
+  ansible.builtin.get_url:
+    url: https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz
+    dest: /usr/local/lib/helm-{{ helm_version }}.tar.gz
+    checksum: "{{ helm_checksum }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Create a folder for this Helm version
+  ansible.builtin.file:
+    path: /usr/local/lib/helm-{{ helm_version }}
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Unpack Helm
+  ansible.builtin.unarchive:
+    src: /usr/local/lib/helm-{{ helm_version }}.tar.gz
+    dest: /usr/local/lib/helm-{{ helm_version }}
+    remote_src: true
+    creates: /usr/local/lib/helm-{{ helm_version }}/linux-amd64/helm
+  when: not ansible_check_mode
+
+- name: Put Helm on the PATH
+  ansible.builtin.file:
+    src: /usr/local/lib/helm-{{ helm_version }}/linux-amd64/helm
+    dest: /usr/local/bin/helm
+    state: link
+  when: not ansible_check_mode
+
+# The runner user. Members of the docker group have root-level access to the server,
+# which is why runners act only on trusted events (tag pushes by the owner).
+
+- name: Install acl (lets Ansible run tasks as the runner user)
+  ansible.builtin.apt:
+    name: acl
+    state: present
+
+- name: Create the runner user
+  ansible.builtin.user:
+    name: github-runner
+    system: true
+    home: /var/lib/github-runner
+    shell: /bin/bash
+    groups: docker
+    append: true
+
+- name: Create the runner's kube folder
+  ansible.builtin.file:
+    path: /var/lib/github-runner/.kube
+    state: directory
+    owner: github-runner
+    group: github-runner
+    mode: "0700"
+
+- name: Give the runner cluster access for Helm
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /var/lib/github-runner/.kube/config
+    remote_src: true
+    owner: github-runner
+    group: github-runner
+    mode: "0600"
+  when: not ansible_check_mode
+
+# The deploy script and its settings.
+
+- name: Create the deploy folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/homeserver, owner: root, mode: "0755" }
+    - { path: /opt/homeserver/charts, owner: root, mode: "0755" }
+    - { path: /var/lib/homeserver-deploy, owner: github-runner, mode: "0750" }
+
+- name: Save the domain for the deploy script
+  ansible.builtin.copy:
+    content: "{{ secrets.domain }}\n"
+    dest: /etc/homeserver/domain
+    owner: root
+    group: github-runner
+    mode: "0640"
+  diff: false
+
+- name: Install the shared Helm chart
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../charts/app"
+    dest: /opt/homeserver/charts/
+    owner: root
+    group: root
+    mode: u=rwX,go=rX
+
+- name: Install the deploy script and the image helper
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - { src: homeserver-deploy, dest: /usr/local/bin/homeserver-deploy }
+    - { src: homeserver-images, dest: /usr/local/sbin/homeserver-images }
+
+- name: Let the runner run the image helper as root, and nothing else
+  ansible.builtin.copy:
+    src: sudoers-homeserver-images
+    dest: /etc/sudoers.d/homeserver-images
+    owner: root
+    group: root
+    mode: "0440"
+    validate: visudo -cf %s
+
+# One runner per app repo, registered with a token fetched by `gh` on the admin machine.
+
+- name: Download the GitHub Actions runner {{ runner_version }}
+  ansible.builtin.get_url:
+    url: https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz
+    dest: /var/lib/github-runner/actions-runner-{{ runner_version }}.tar.gz
+    checksum: "{{ runner_checksum }}"
+    owner: github-runner
+    group: github-runner
+    mode: "0644"
+
+- name: Create a folder for each runner
+  ansible.builtin.file:
+    path: /var/lib/github-runner/runners/{{ item }}
+    state: directory
+    owner: github-runner
+    group: github-runner
+  loop: "{{ runner_repos }}"
+
+- name: Unpack the runner for each repo
+  ansible.builtin.unarchive:
+    src: /var/lib/github-runner/actions-runner-{{ runner_version }}.tar.gz
+    dest: /var/lib/github-runner/runners/{{ item }}
+    remote_src: true
+    creates: /var/lib/github-runner/runners/{{ item }}/config.sh
+    owner: github-runner
+    group: github-runner
+  loop: "{{ runner_repos }}"
+  when: not ansible_check_mode
+
+# After unpacking: the archive's own folder entry would otherwise reset the permissions,
+# and the next run would report a change.
+- name: Make each runner folder private to the runner user
+  ansible.builtin.file:
+    path: /var/lib/github-runner/runners/{{ item }}
+    state: directory
+    mode: "0750"
+  loop: "{{ runner_repos }}"
+
+- name: Check which runners are registered
+  ansible.builtin.stat:
+    path: /var/lib/github-runner/runners/{{ item }}/.runner
+  loop: "{{ runner_repos }}"
+  register: runner_registered
+
+- name: Read the GitHub account from gh on the admin machine
+  ansible.builtin.command: gh api user --jq .login
+  register: github_account
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+  when: runner_registered.results | rejectattr('stat.exists') | list | length > 0
+
+- name: Register each new runner with a fresh token
+  ansible.builtin.include_tasks: register-runner.yml
+  loop: "{{ runner_registered.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
+  loop_control:
+    loop_var: repo
+  when: not ansible_check_mode
+
+- name: Read each runner's service name
+  ansible.builtin.slurp:
+    src: /var/lib/github-runner/runners/{{ item }}/.service
+  loop: "{{ runner_repos }}"
+  register: runner_services
+  when: not ansible_check_mode
+
+- name: Keep each runner running and starting at boot
+  ansible.builtin.systemd_service:
+    name: "{{ item.content | b64decode | trim }}"
+    enabled: true
+    state: started
+  loop: "{{ runner_services.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: not ansible_check_mode

@@ -1,0 +1,25 @@
+# Docker builds app images on the server. Ubuntu's own packages are used so that
+# Docker gets security updates through unattended-upgrades with the rest of the system.
+
+- name: Install Docker and BuildKit
+  ansible.builtin.apt:
+    name:
+      - docker.io
+      - docker-buildx
+    state: present
+
+- name: Limit Docker's log and build cache size
+  ansible.builtin.copy:
+    src: daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Docker
+
+- name: Start Docker and start it at boot
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+  when: not ansible_check_mode

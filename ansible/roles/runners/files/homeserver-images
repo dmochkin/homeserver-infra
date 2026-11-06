@@ -1,0 +1,47 @@
+#!/bin/bash
+# Managed by Ansible (roles/runners).
+# The only command the runner user may run with sudo (see /etc/sudoers.d/homeserver-images).
+# k3s's image store is root-only, so importing and removing app images needs root.
+#
+#   homeserver-images import <app>      reads a "docker save" archive on stdin
+#   homeserver-images prune <app> <n>   keeps the newest <n> release images of <app>
+#
+# Only images named <app>:<1.2.3> are accepted, so the runner cannot replace
+# system images such as Traefik or cloudflared.
+set -euo pipefail
+
+die() { echo "homeserver-images: $*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: homeserver-images import <app> | prune <app> <n>"
+cmd=$1 app=$2
+[[ $app =~ ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ ]] || die "invalid app name: $app"
+
+case $cmd in
+  import)
+    workdir=$(mktemp -d /var/lib/homeserver-deploy/import.XXXXXX)
+    trap 'rm -rf "$workdir"' EXIT
+    cat > "$workdir/image.tar"
+    tar -xOf "$workdir/image.tar" manifest.json > "$workdir/manifest.json" || die "not a docker save archive"
+    python3 - "$workdir/manifest.json" "$app" <<'EOF' || die "archive may only contain $app:<1.2.3> images"
+import json, re, sys
+tags = [t for entry in json.load(open(sys.argv[1])) for t in (entry.get("RepoTags") or [])]
+pattern = re.compile(re.escape(sys.argv[2]) + r":[0-9]+\.[0-9]+\.[0-9]+")
+sys.exit(0 if tags and all(pattern.fullmatch(t) for t in tags) else 1)
+EOF
+    k3s ctr --namespace k8s.io images import "$workdir/image.tar"
+    ;;
+  prune)
+    keep=${3:-3}
+    [[ $keep =~ ^[1-9][0-9]*$ ]] || die "invalid number to keep: $keep"
+    prefix="docker.io/library/$app:"
+    mapfile -t refs < <(k3s ctr --namespace k8s.io images list --quiet \
+      | grep -E "^${prefix//./\\.}[0-9]+\.[0-9]+\.[0-9]+$" | sort -V)
+    for ((i = 0; i < ${#refs[@]} - keep; i++)); do
+      echo "Removing ${refs[i]}"
+      k3s ctr --namespace k8s.io images remove "${refs[i]}" >/dev/null
+    done
+    ;;
+  *)
+    die "unknown command: $cmd"
+    ;;
+esac

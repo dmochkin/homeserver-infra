@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limits
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        {{- toYaml .Values.resources.requests | nindent 8 }}
+      default:
+        {{- toYaml .Values.resources.limits | nindent 8 }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: namespace-limits
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  hard:
+    limits.cpu: {{ .Values.namespaceLimits.cpu | quote }}
+    limits.memory: {{ .Values.namespaceLimits.memory | quote }}

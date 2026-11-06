@@ -42,7 +42,7 @@ flowchart LR
 | cloudflared | Outbound tunnel from the server to Cloudflare; replaces open ports and on-server certificates |
 | Cloudflare | DNS for the domain, proxy, HTTPS for visitors, R2 object storage for backups |
 | Postgres 17 | One shared instance; one database and one user per app |
-| GitHub Actions runners | One self-hosted runner service per app repo; a shared lock allows one build at a time |
+| GitHub Actions runners | One self-hosted runner per app repo for tag deploys; a shared lock allows one build at a time. Pull request tests run on GitHub-hosted runners. |
 | Docker | Builds app images on the server; images are imported into k3s (no registry) |
 | Shared Helm chart | One chart in this repo deploys every app, with per-app settings |
 | SOPS + age | Secrets encrypted in this repo; decrypted only at deploy time |
@@ -71,19 +71,19 @@ The home router has no port forwarding. The home IP address is never exposed.
 
 1. Develop and test locally (see the local setup guide).
 2. Push a branch. The pre-push hook runs the fast tests and gitleaks.
-3. Open a pull request. The runner runs the full test suite. Review happens before merge.
+3. Open a pull request. GitHub-hosted runners run the full test suite. Review happens before merge.
 4. Merge to `main`.
 5. Push a release tag in `1.2.3` format.
-6. The runner:
+6. The app's self-hosted runner calls `homeserver-deploy`, which:
     1. Waits for the build lock.
     2. Builds the image with Docker.
-    3. Imports it into k3s.
-    4. Runs `helm upgrade` with the shared chart and the app's settings.
+    3. Imports it into k3s through a root helper that accepts only images named after the app.
+    4. Runs `helm upgrade` with the shared chart, the app's `deploy/values.yaml`, and the image and domain set on the server; a failed upgrade is rolled back.
     5. Removes all but the last 3 images of that app.
-    6. Sends a deploy heartbeat.
+    6. Sends a deploy heartbeat (added in the monitoring step).
 7. Rollback: redeploy one of the 3 kept tags.
 
-Runners act only on trusted events: tag pushes and branches from the owner. Pull requests from forks need approval.
+Self-hosted runners act only on trusted events: release tags pushed by the owner. Pull request tests, including from forks, run only on GitHub-hosted runners, and fork pull requests need approval.
 
 ## Environments
 
@@ -151,7 +151,7 @@ Runners act only on trusted events: tag pushes and branches from the owner. Pull
 | Repo | Contains |
 | --- | --- |
 | `homeserver-infra` (private) | Ansible playbooks, the shared Helm chart, platform manifests (Postgres, cloudflared, backups), encrypted secrets, these docs |
-| Each app repo | App code, tests, `Dockerfile`, `compose.yaml` for local runs, deploy settings for the shared chart, CI workflow |
+| Each app repo | App code, tests, `Dockerfile`, `compose.yaml` for local runs, `deploy/values.yaml` for the shared chart, a test workflow (GitHub-hosted) and a deploy workflow (self-hosted, on release tags) |
 
 ## Out of scope
 

@@ -20,3 +20,13 @@ cloudflared_version: "2026.10.7"
 
 # Hello-world status page at status.<domain>.
 status_page_image: nginxinc/nginx-unprivileged:1.30.6-alpine
+
+# Deploy by tag: Helm on the server, and one GitHub Actions runner per app repo.
+helm_version: v4.3.1
+helm_checksum: sha256:0403a88ae20913d11b10a2467b50087721fea7581736da6b9d3992f5357fe54b
+# Used only to install a new runner; runners then update themselves (GitHub requires current runners).
+runner_version: "2.338.2"
+runner_checksum: sha256:baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+# App repos that deploy to this server, by name. The GitHub account comes from `gh` on the admin machine.
+runner_repos:
+  - hello-world

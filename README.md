@@ -15,7 +15,7 @@ Configuration for the home server that runs every app: server setup with Ansible
 | Path | Contents |
 | --- | --- |
 | `ansible/` | Playbook and roles that configure the server; run from `ansible/` (see [Server setup](docs/server-setup.md), step 7) |
-| `charts/app/` | Shared Helm chart used to deploy every app (added in a later setup step) |
+| `charts/app/` | Shared Helm chart used to deploy every app; settings in `charts/app/values.yaml` |
 | `platform/` | Cluster-wide services: Postgres, Cloudflare Tunnel, backups (added in a later setup step) |
 | `secrets/` | SOPS-encrypted secrets (`prod.enc.yaml`), `*.enc.yaml` only, subfolders allowed |
 | `docs/` | The guides above |

@@ -112,7 +112,10 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
 
 ## 6. Prepare GitHub runners
 
-For each app repo: **Settings → Actions → Runners → New self-hosted runner**, copy the registration token, and add it to the encrypted secrets. Tokens expire after an hour, so do this right before step 7.
+Runners are registered by Ansible in step 7: for each repo listed in `runner_repos` (in `ansible/group_vars/all.yml`), it asks GitHub for a fresh registration token with `gh` on the admin machine. No token is stored.
+
+1. On the admin machine, sign in to GitHub CLI once with an account that administers the app repos: `gh auth login`.
+2. In each app repo, under **Settings → Actions → General**, set fork pull request workflows to require approval for all outside collaborators. Pull request tests run on GitHub-hosted runners; only tag deploys run on the server.
 
 ## 7. Run Ansible from the admin machine
 
@@ -138,11 +141,10 @@ The playbook does, in order:
 | --- | --- |
 | base | SSH keys only, no root or password login; time zone; daily automatic security updates; a reboot on Sundays at 4am only when an update requires one; fail2ban on SSH |
 | firewall | Deny all incoming from the home network and the internet; allow SSH on the Tailscale interface. Tailscale accepts tailnet traffic before ufw, so this does not limit access from your own devices. |
-| docker | Docker Engine for image builds |
+| docker | Docker from Ubuntu's packages (updated with the system), with log and build cache limits |
 | k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
-| platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine (Postgres 17, backup and restore-test jobs are added in later steps) |
-| hello_world | A static page at `status.<domain>` that proves Cloudflare → tunnel → Traefik → app works |
-| runners | One GitHub Actions runner service per app repo, the shared build lock, image pruning (keep 3) |
+| platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine (Postgres 17, backup and restore-test jobs are added in later steps). The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
+| runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` |
 | secrets | Decrypts SOPS secrets and applies them as Kubernetes Secrets |
 | monitoring | Heartbeat URLs for jobs, backups and deploys |
 
@@ -210,6 +212,6 @@ sops secrets/prod.enc.yaml      # opens decrypted in your editor, re-encrypts on
 | Task | How |
 | --- | --- |
 | Update the server config | Change the playbook, open a PR, merge, rerun step 7 |
-| Add a new app | Add its settings to the shared chart values, a runner role entry and DNS route; rerun step 7 |
+| Add a new app | In the app repo, add `deploy/values.yaml` and the deploy and test workflows (copy them from the hello-world repo). Add the repo to `runner_repos`, rerun step 7, add a Cloudflare route for its subdomain, then push a release tag. |
 | Check disk health | `sudo smartctl -a /dev/sda` (reading a raw disk device needs administrator rights) |
 | Reboot | `sudo reboot` (only an administrator may restart the system); apps come back on their own |

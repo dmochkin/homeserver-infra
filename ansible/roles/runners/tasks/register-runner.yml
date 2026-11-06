@@ -1,0 +1,34 @@
+# Registers the runner for one repo (loop variable: repo). Runs only for runners not yet registered.
+
+- name: Get a registration token for {{ repo }} from GitHub
+  ansible.builtin.command: gh api --method POST repos/{{ github_account.stdout }}/{{ repo }}/actions/runners/registration-token --jq .token
+  register: registration_token
+  changed_when: false
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Register the runner for {{ repo }}
+  ansible.builtin.command:
+    argv:
+      - ./config.sh
+      - --unattended
+      - --url
+      - https://github.com/{{ github_account.stdout }}/{{ repo }}
+      - --token
+      - "{{ registration_token.stdout }}"
+      - --name
+      - homeserver-{{ repo }}
+      - --labels
+      - homeserver
+      - --replace
+    chdir: /var/lib/github-runner/runners/{{ repo }}
+    creates: /var/lib/github-runner/runners/{{ repo }}/.runner
+  become_user: github-runner
+  no_log: true
+
+- name: Install the runner for {{ repo }} as a service
+  ansible.builtin.command:
+    cmd: ./svc.sh install github-runner
+    chdir: /var/lib/github-runner/runners/{{ repo }}
+    creates: /var/lib/github-runner/runners/{{ repo }}/.service

@@ -1,0 +1,40 @@
+# Set by the server's deploy script (homeserver-deploy). Not set in app repos.
+image:
+  # Images are built on the server and imported into k3s; there is no registry.
+  repository: ""
+  tag: ""
+domain: ""
+
+# Set in each app repo's deploy/values.yaml.
+
+# The app is served at https://<subdomain>.<domain>. Empty: no web address (for example, jobs only).
+subdomain: ""
+# Port the app listens on inside its container.
+port: 8080
+# Path that answers 200 when the app is ready.
+healthPath: /
+replicas: 1
+
+# Plain settings, passed as environment variables. Never put secrets here.
+env: {}
+# Name of a Kubernetes Secret in the app's namespace whose keys become environment variables.
+envSecret: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Upper limit for everything in the app's namespace together.
+namespaceLimits:
+  cpu: "1"
+  memory: 1Gi
+
+# Scheduled jobs, run with the app's image in Toronto time, never overlapping.
+#   - name: nightly-sync
+#     schedule: "0 3 * * *"
+#     command: ["java", "-jar", "app.jar", "sync"]
+cronJobs: []
