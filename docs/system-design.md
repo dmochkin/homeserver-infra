@@ -109,8 +109,8 @@ Self-hosted runners act only on trusted events: release tags pushed by the owner
 ## Secrets
 
 - Stored encrypted in this repo with SOPS and age.
-- The runner decrypts them at deploy time and applies them as Kubernetes Secrets.
-- The age private key is kept on the server, in Bitwarden and in one offline copy.
+- Ansible decrypts them on the admin machine and applies each app's secrets as the Kubernetes Secret `<app>-env`, which the app reads as environment variables. A changed Secret restarts the app. The runner never holds the age key.
+- The age private key is kept on the admin machine, in Bitwarden, in one offline copy, and on the server (`/etc/homeserver/age/keys.txt`, root only) for restoring and testing backups.
 - Google OAuth: the first token is stored in SOPS; renewed tokens are saved encrypted in the app's database.
 
 ## Security baseline

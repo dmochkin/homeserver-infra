@@ -36,4 +36,5 @@
     - docker
     - k3s
     - platform
+    - secrets
     - runners

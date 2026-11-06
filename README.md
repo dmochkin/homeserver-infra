@@ -37,7 +37,7 @@ The hooks run gitleaks in Docker before each commit and push, and block them if 
 
 ## Working with secrets
 
-Secrets are encrypted with SOPS and age. The age private key is kept in Bitwarden, on the server and in one offline copy, and is never committed. To create the key or set it up on a new machine, see [Secrets in the server setup guide](docs/server-setup.md#secrets).
+Secrets are encrypted with SOPS and age. The age private key is kept in Bitwarden, on the server and in one offline copy, and is never committed. To create the key or set it up on a new machine, and to add secrets for an app (`secrets/apps/<app>.enc.yaml`), see [Secrets in the server setup guide](docs/server-setup.md#secrets).
 
 ```bash
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt   # required on macOS
