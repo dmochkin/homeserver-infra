@@ -145,7 +145,7 @@ The playbook does, in order:
 | k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
 | platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine (Postgres 17, backup and restore-test jobs are added in later steps). The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
 | runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` |
-| secrets | Decrypts SOPS secrets and applies them as Kubernetes Secrets |
+| secrets | Decrypts each `secrets/apps/<app>.enc.yaml` on the admin machine and applies it as the Kubernetes Secret `<app>-env` (restarting the app when it changes); copies the age private key to `/etc/homeserver/age/keys.txt` (root only) |
 | monitoring | Heartbeat URLs for jobs, backups and deploys |
 
 The playbook is safe to run again; a second run should report no changes.
@@ -207,11 +207,24 @@ sops secrets/prod.enc.yaml      # opens decrypted in your editor, re-encrypts on
 - SOPS encrypts values, not field names. Put secrets and personal data only in values.
 - Never commit a decrypted file. gitleaks blocks commits and pushes that contain secrets.
 
+### App secrets
+
+Each app's secret settings live in `secrets/apps/<app>.enc.yaml`, named after the app, one environment variable per line:
+
+```yaml
+DATABASE_PASSWORD: "…"
+GOOGLE_CLIENT_SECRET: "…"
+```
+
+1. Create or edit the file: `sops secrets/apps/<app>.enc.yaml`. Quote every value; the playbook stops and names any value that is not a quoted string.
+2. In the app repo, set `envSecret: <app>-env` in `deploy/values.yaml`.
+3. Rerun step 7. Ansible applies the file as the Kubernetes Secret `<app>-env` in the app's namespace and restarts the app if the secrets changed.
+
 ## Routine operations
 
 | Task | How |
 | --- | --- |
 | Update the server config | Change the playbook, open a PR, merge, rerun step 7 |
-| Add a new app | In the app repo, add `deploy/values.yaml` and the deploy and test workflows (copy them from the hello-world repo). Add the repo to `runner_repos`, rerun step 7, add a Cloudflare route for its subdomain, then push a release tag. |
+| Add a new app | In the app repo, add `deploy/values.yaml` and the deploy and test workflows (copy them from the hello-world repo). Add the repo to `runner_repos`, add its secrets if it has any (see "App secrets"), rerun step 7, add a Cloudflare route for its subdomain, then push a release tag. |
 | Check disk health | `sudo smartctl -a /dev/sda` (reading a raw disk device needs administrator rights) |
 | Reboot | `sudo reboot` (only an administrator may restart the system); apps come back on their own |
