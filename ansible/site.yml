@@ -33,6 +33,7 @@
   roles:
     - base
     - firewall
+    - docker
     - k3s
     - platform
-    - hello_world
+    - runners

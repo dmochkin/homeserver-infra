@@ -1,0 +1,52 @@
+#!/bin/bash
+# Managed by Ansible (roles/runners).
+# Builds and deploys one app release. Called by each app repo's deploy workflow
+# on the self-hosted runner:
+#
+#   homeserver-deploy <app> <tag> <source folder>
+#
+# The source folder must contain a Dockerfile and deploy/values.yaml.
+set -euo pipefail
+
+die() { echo "homeserver-deploy: $*" >&2; exit 1; }
+
+[ $# -eq 3 ] || die "usage: homeserver-deploy <app> <tag> <source folder>"
+app=$1 tag=$2 src=$3
+
+[[ $app =~ ^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$ ]] || die "app name must be lowercase letters, digits and dashes: $app"
+[[ $tag =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "release tags look like 1.2.3 (no v): $tag"
+[ -f "$src/Dockerfile" ] || die "no Dockerfile in $src"
+[ -f "$src/deploy/values.yaml" ] || die "no deploy/values.yaml in $src"
+
+domain=$(cat /etc/homeserver/domain)
+chart=/opt/homeserver/charts/app
+
+# One build at a time across all apps, so builds don't compete with each other for memory.
+exec 9>/var/lib/homeserver-deploy/build.lock
+echo "Waiting for the build lock"
+flock 9
+
+echo "Building $app:$tag"
+docker build --pull -t "$app:$tag" "$src"
+
+echo "Importing $app:$tag into k3s"
+docker save "$app:$tag" | sudo /usr/local/sbin/homeserver-images import "$app"
+
+echo "Deploying $app $tag"
+# Values set here come last, so an app repo cannot override the image or the domain.
+helm upgrade "$app" "$chart" \
+  --install --namespace "$app" --create-namespace \
+  --values "$src/deploy/values.yaml" \
+  --set-string image.repository="$app" \
+  --set-string image.tag="$tag" \
+  --set-string domain="$domain" \
+  --wait --timeout 5m --rollback-on-failure
+
+echo "Keeping the last 3 images of $app"
+sudo /usr/local/sbin/homeserver-images prune "$app" 3
+mapfile -t tags < <(docker image ls "$app" --format '{{.Tag}}' | sort -V)
+for ((i = 0; i < ${#tags[@]} - 3; i++)); do
+  docker image rm "$app:${tags[i]}" >/dev/null
+done
+
+echo "Deployed $app $tag"
