@@ -100,7 +100,7 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
 
 1. **Tunnel:** in the Cloudflare dashboard, go to **Networking → Tunnels** and select **Create a tunnel** (name it, for example, `homeserver`). Don't run the install command it offers; cloudflared runs in the cluster. To get the token of an existing tunnel, open it, select **Add a replica** on the **Overview** tab, and copy the `eyJ…` string from the command. **Refresh token** on the same tab replaces a leaked token.
 2. **Routes:** on the tunnel's **Routes** tab, for each app select **Add route → Published application**: subdomain `<app>`, your domain, service URL `http://traefik.kube-system.svc.cluster.local:80`. The first route is `status`, for the hello-world status page.
-3. **R2:** create a bucket for backups and an API token limited to that bucket.
+3. **R2:** under **R2 Object Storage**, create a bucket for backups. Then create an API token with **Object Read & Write** permission for that bucket only. Note its access key ID, secret access key and the S3 endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
 4. Add the values to `secrets/prod.enc.yaml` (see "Secrets" below). On first setup, create the age key first.
 
     | Field | Value |
@@ -108,7 +108,11 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
     | `cloudflare_tunnel_token` | The tunnel token (`eyJ…`) |
     | `domain` | The domain, without `https://` or `www.` |
 
-    R2 credentials are added in the backups step.
+    | `postgres_password` | A long random password for the Postgres superuser, for example from `openssl rand -hex 32` |
+    | `r2_access_key_id` | The R2 token's access key ID |
+    | `r2_secret_access_key` | The R2 token's secret access key |
+    | `r2_endpoint` | The R2 S3 endpoint, `https://<account-id>.r2.cloudflarestorage.com` |
+    | `r2_bucket` | The backup bucket's name |
 
 ## 6. Prepare GitHub runners
 
@@ -143,8 +147,10 @@ The playbook does, in order:
 | firewall | Deny all incoming from the home network and the internet; allow SSH on the Tailscale interface. Tailscale accepts tailnet traffic before ufw, so this does not limit access from your own devices. |
 | docker | Docker from Ubuntu's packages (updated with the system), with log and build cache limits |
 | k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
-| platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine (Postgres 17, backup and restore-test jobs are added in later steps). The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
+| platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine; its namespace sets default CPU and memory limits, because the chart ignores resource settings. The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
 | runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` |
+| postgres | Postgres 17 in namespace `postgres` (data on the server's disk); a `canary` database with 100 known rows for backup checks; a database and user for each app whose secrets include `DATABASE_PASSWORD` |
+| backups | Builds the backup image on the server; a nightly encrypted backup to R2 (03:00) and a monthly restore check (1st of the month, 05:00) |
 | secrets | Decrypts each `secrets/apps/<app>.enc.yaml` on the admin machine and applies it as the Kubernetes Secret `<app>-env` (restarting the app when it changes); copies the age private key to `/etc/homeserver/age/keys.txt` (root only) |
 | monitoring | Heartbeat URLs for jobs, backups and deploys |
 
@@ -154,10 +160,11 @@ The playbook is safe to run again; a second run should report no changes.
 
 ```bash
 cd ~/Developer/homeserver-infra/ansible
-ansible-playbook restore.yml -e backup=latest --ask-become-pass
+ansible-playbook restore.yml --ask-become-pass                     # newest backup
+ansible-playbook restore.yml -e backup=2026-11-05 --ask-become-pass  # a specific day
 ```
 
-Downloads the latest backup from R2, decrypts it and restores each database.
+Runs a one-off job on the server that downloads the backup from R2, decrypts it with the server's age key, restores the roles and then each database. Databases that already exist are skipped, so it never overwrites data. Run it after step 7, before deploying the apps.
 
 ## 9. Verify
 
@@ -168,6 +175,7 @@ Downloads the latest backup from R2, decrypts it and restores each database.
 - [ ] Tagging the hello-world app deploys it in under 10 minutes
 - [ ] Stopping the hello-world app triggers an alert email
 - [ ] Last night's backup exists in R2 (after the first night)
+- [ ] A restore check passes: `kubectl -n postgres create job --from=cronjob/restore-check restore-check-now`, then `kubectl -n postgres logs -f job/restore-check-now`
 - [ ] `ssh` from outside Tailscale is refused
 
 ## Secrets
@@ -226,5 +234,9 @@ GOOGLE_CLIENT_SECRET: "…"
 | --- | --- |
 | Update the server config | Change the playbook, open a PR, merge, rerun step 7 |
 | Add a new app | In the app repo, add `deploy/values.yaml` and the deploy and test workflows (copy them from the hello-world repo). Add the repo to `runner_repos`, add its secrets if it has any (see "App secrets"), rerun step 7, add a Cloudflare route for its subdomain, then push a release tag. |
+| Back up now | `kubectl -n postgres create job --from=cronjob/backup-databases backup-now`, then `kubectl -n postgres logs -f job/backup-now` |
+| Check a restore now | `kubectl -n postgres create job --from=cronjob/restore-check restore-check-now`, then `kubectl -n postgres logs -f job/restore-check-now` |
+| Give an app a database | Add `DATABASE_PASSWORD` to its `secrets/apps/<app>.enc.yaml` and rerun step 7. The database and user are named after the app, with dashes as underscores (`plan-scheme` → `plan_scheme`); the app connects to `postgres.postgres.svc:5432`. |
+| Postgres stuck not ready after a settings change | A StatefulSet does not replace a pod that never became ready. Delete the pod so it is recreated with the new settings; its data stays on its volume: `kubectl -n postgres delete pod postgres-0` |
 | Check disk health | `sudo smartctl -a /dev/sda` (reading a raw disk device needs administrator rights) |
 | Reboot | `sudo reboot` (only an administrator may restart the system); apps come back on their own |

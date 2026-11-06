@@ -121,3 +121,28 @@
   become: false
   no_log: true
   when: not ansible_check_mode
+
+# AppArmor profile for containers that signal their own processes (Postgres).
+# See the comment in the profile for why the default container profile is not enough.
+
+- name: Install the homeserver-container AppArmor profile
+  ansible.builtin.copy:
+    src: apparmor-homeserver-container
+    dest: /etc/apparmor.d/homeserver-container
+    owner: root
+    group: root
+    mode: "0644"
+    validate: apparmor_parser --skip-kernel-load --skip-cache --skip-read-cache -Q %s
+  register: apparmor_profile_file
+
+- name: Check whether the homeserver-container profile is loaded
+  ansible.builtin.command: grep -qx 'homeserver-container (enforce)' /sys/kernel/security/apparmor/profiles
+  register: apparmor_profile_loaded
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Load the homeserver-container profile
+  ansible.builtin.command: apparmor_parser --replace --write-cache /etc/apparmor.d/homeserver-container
+  when: apparmor_profile_file.changed or apparmor_profile_loaded.rc != 0
+  changed_when: true

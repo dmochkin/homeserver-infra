@@ -1,0 +1,53 @@
+# Managed by Ansible (roles/backups).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-settings
+  namespace: postgres
+data:
+  PGHOST: postgres
+  PGUSER: postgres
+  # All rclone settings come from the environment; no config file.
+  RCLONE_CONFIG: /dev/null
+  TZ: {{ server_timezone }}
+  AGE_RECIPIENT: {{ age_recipient }}
+  KEEP_DAILY: {{ backup_keep_daily }}
+  KEEP_WEEKLY: {{ backup_keep_weekly }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-databases
+  namespace: postgres
+spec:
+  schedule: "{{ backup_schedule }}"
+  timeZone: {{ server_timezone }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+{% set command = ["backup-databases"] %}{% set with_key = false %}
+          {% filter indent(10) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: restore-check
+  namespace: postgres
+spec:
+  schedule: "{{ restore_check_schedule }}"
+  timeZone: {{ server_timezone }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+{% set command = ["restore-check"] %}{% set with_key = true %}
+          {% filter indent(10) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}

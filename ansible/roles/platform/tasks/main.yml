@@ -1,6 +1,43 @@
 # Runs on the admin machine with kubectl access over Tailscale (~/.kube/config, written by the k3s role).
 # Helm stores the release, including the tunnel token, as a Kubernetes Secret, encrypted at rest by k3s.
 
+# Cloudflare's chart (0.1.2) only uses the token, image and replica count; it ignores
+# resources and security settings. Limits therefore come from the namespace instead.
+- name: Create the cloudflared namespace with CPU and memory limits
+  kubernetes.core.k8s:
+    definition:
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: cloudflared
+      - apiVersion: v1
+        kind: LimitRange
+        metadata:
+          name: default-limits
+          namespace: cloudflared
+        spec:
+          limits:
+            - type: Container
+              defaultRequest:
+                cpu: 10m
+                memory: 32Mi
+              default:
+                cpu: 200m
+                memory: 128Mi
+      - apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: namespace-limits
+          namespace: cloudflared
+        spec:
+          hard:
+            limits.cpu: "1"
+            limits.memory: 512Mi
+  delegate_to: localhost
+  become: false
+  register: cloudflared_limits
+  when: not (ansible_check_mode and k3s_installed.rc != 0)
+
 - name: Connect the cluster to Cloudflare Tunnel (cloudflared)
   kubernetes.core.helm:
     name: cloudflared
@@ -8,7 +45,6 @@
     chart_repo_url: https://cloudflare.github.io/helm-charts
     chart_version: "{{ cloudflared_chart_version }}"
     release_namespace: cloudflared
-    create_namespace: true
     wait: true
     values:
       cloudflare:
@@ -16,18 +52,18 @@
       image:
         tag: "{{ cloudflared_version }}"
       replicaCount: 2
-      resources:
-        requests:
-          cpu: 10m
-          memory: 32Mi
-        limits:
-          cpu: 200m
-          memory: 128Mi
   delegate_to: localhost
   become: false
   no_log: true
   # A dry run before k3s is installed has no cluster to check against.
   when: not (ansible_check_mode and k3s_installed.rc != 0)
+
+# Default limits only apply to new pods, so restart cloudflared (one copy at a time) when they change.
+- name: Restart cloudflared to pick up changed limits
+  ansible.builtin.command: kubectl --namespace cloudflared rollout restart deployment/cloudflared-cloudflare-tunnel-remote
+  delegate_to: localhost
+  become: false
+  when: cloudflared_limits.changed | default(false) and not ansible_check_mode
 
 # The status page moved to the hello-world repo, which deploys it by tag with the shared chart.
 # Remove the copy that Ansible used to deploy through k3s's manifests folder.

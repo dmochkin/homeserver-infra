@@ -101,10 +101,12 @@ Self-hosted runners act only on trusted events: release tags pushed by the owner
 
 ## Data and backups
 
-- Postgres 17 runs as a plain deployment on local storage.
-- Every night a job dumps each database, encrypts it with age and uploads it to R2.
-- Retention: 7 daily and 4 weekly copies.
-- A restore test runs before go-live, then monthly as an automated job that alerts on failure.
+- Postgres 17 runs as a single StatefulSet on the server's disk (k3s local storage). Each app has its own database and user.
+- A `canary` database holds 100 known rows, so backups and restore checks always have real data to verify.
+- Every night at 03:00 a job dumps the roles and each database, encrypting each dump with the age public key as it is written (no plaintext on disk), and uploads it to R2 under `daily/<date>/`; on Sundays also under `weekly/<date>/`.
+- Retention: daily copies are kept 7 days and weekly copies 28 days (about 4).
+- On the 1st of each month at 05:00, a restore check downloads the newest backup, decrypts it with the server's age key, checks every dump is readable and restores `canary` into a scratch database, expecting 100 rows. It fails loudly on any problem.
+- A restore test runs before go-live. A rebuild restores everything with `restore.yml`.
 
 ## Secrets
 

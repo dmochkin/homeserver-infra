@@ -1,0 +1,67 @@
+# Nightly encrypted backups to Cloudflare R2, a monthly restore check, and the
+# image both run in. The image tag changes whenever its files or Postgres change.
+
+- name: Work out the backup image tag and the age public key
+  ansible.builtin.include_tasks: facts.yml
+
+# Build on the server and import into k3s, like app images. No registry.
+
+- name: Copy the backup image files to the server
+  ansible.builtin.copy:
+    src: image/
+    dest: /opt/homeserver/backup-image/
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check whether the backup image is in k3s
+  ansible.builtin.shell: k3s ctr --namespace k8s.io images list --quiet | grep -qx "docker.io/library/{{ backup_image }}"
+  register: backup_image_present
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Build the backup image and import it into k3s
+  ansible.builtin.shell: |
+    set -euo pipefail
+    docker build --pull --build-arg POSTGRES_IMAGE={{ postgres_image }} -t {{ backup_image }} /opt/homeserver/backup-image
+    docker save {{ backup_image }} | k3s ctr --namespace k8s.io images import -
+    # Remove older versions of the backup image.
+    # (grep finds nothing on the first build; that is not an error.)
+    for old in $(k3s ctr --namespace k8s.io images list --quiet | grep '^docker.io/library/backup-tools:' | grep -vx "docker.io/library/{{ backup_image }}" || true); do
+      k3s ctr --namespace k8s.io images remove "$old" >/dev/null
+    done
+    { docker image ls backup-tools --format '{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}' | grep -vx "{{ backup_image }}" || true; } | xargs -r docker image rm >/dev/null
+  args:
+    executable: /bin/bash
+  when: backup_image_present.rc != 0
+
+# Credentials and settings, applied from the admin machine.
+
+- name: Store the R2 credentials
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: backup-storage
+        namespace: postgres
+      data:
+        RCLONE_CONFIG_R2_TYPE: "{{ 's3' | b64encode }}"
+        RCLONE_CONFIG_R2_PROVIDER: "{{ 'Cloudflare' | b64encode }}"
+        RCLONE_CONFIG_R2_ACCESS_KEY_ID: "{{ secrets.r2_access_key_id | b64encode }}"
+        RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: "{{ secrets.r2_secret_access_key | b64encode }}"
+        RCLONE_CONFIG_R2_ENDPOINT: "{{ secrets.r2_endpoint | b64encode }}"
+        BUCKET: "{{ secrets.r2_bucket | b64encode }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+# Rendered with the template lookup (not the module's template option) so the
+# shared pod-spec.yaml.j2 include is found in this role's templates folder.
+- name: Schedule the nightly backup and the monthly restore check
+  kubernetes.core.k8s:
+    definition: "{{ lookup('ansible.builtin.template', 'backups.yaml.j2') | ansible.builtin.from_yaml_all | list }}"
+  delegate_to: localhost
+  become: false
