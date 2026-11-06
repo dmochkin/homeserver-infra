@@ -1,0 +1,40 @@
+#!/bin/sh
+# Nightly backup: dumps every database, encrypts each dump with the age public key
+# as it is written (plaintext never touches disk) and uploads to R2.
+#
+#   daily/<date>/   every night, kept $KEEP_DAILY
+#   weekly/<date>/  Sundays, kept $KEEP_WEEKLY
+#
+# Environment: PGHOST, PGUSER, PGPASSWORD, AGE_RECIPIENT, BUCKET, KEEP_DAILY,
+# KEEP_WEEKLY, rclone's RCLONE_CONFIG_R2_* settings, and optionally HEARTBEAT_URL.
+set -eu -o pipefail
+
+day=$(date +%F)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+echo "Backing up roles and settings"
+pg_dumpall --globals-only | age --recipient "$AGE_RECIPIENT" > "$work/globals.sql.age"
+
+for db in $(psql --tuples-only --no-align --dbname postgres \
+    --command "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY 1"); do
+  echo "Backing up $db"
+  pg_dump --format custom --dbname "$db" | age --recipient "$AGE_RECIPIENT" > "$work/$db.dump.age"
+done
+
+echo "Uploading to daily/$day"
+rclone copy "$work" "r2:$BUCKET/daily/$day" --s3-no-check-bucket
+
+if [ "$(date +%u)" = 7 ]; then
+  echo "Uploading to weekly/$day"
+  rclone copy "$work" "r2:$BUCKET/weekly/$day" --s3-no-check-bucket
+fi
+
+echo "Removing daily backups older than $KEEP_DAILY and weekly backups older than $KEEP_WEEKLY"
+rclone delete "r2:$BUCKET/daily" --min-age "$KEEP_DAILY"
+rclone delete "r2:$BUCKET/weekly" --min-age "$KEEP_WEEKLY"
+
+if [ -n "${HEARTBEAT_URL:-}" ]; then
+  wget --quiet --output-document /dev/null "$HEARTBEAT_URL"
+fi
+echo "Backup $day done"

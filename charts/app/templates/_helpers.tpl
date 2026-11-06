@@ -20,6 +20,11 @@ securityContext:
   runAsNonRoot: true
   seccompProfile:
     type: RuntimeDefault
+  # The standard container profile plus signals between Ubuntu 26.04's stacked labels
+  # (installed by homeserver-infra roles/k3s). Needed by Go programs and anything that signals its own processes.
+  appArmorProfile:
+    type: Localhost
+    localhostProfile: homeserver-container
 {{- end }}
 
 {{- define "app.containerSecurity" -}}

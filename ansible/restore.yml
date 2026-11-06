@@ -1,0 +1,52 @@
+# Restores roles and every database from a backup in R2, for a rebuilt server.
+# Databases that already exist are skipped, so it never overwrites data.
+#
+#   ansible-playbook restore.yml --ask-become-pass                    newest backup
+#   ansible-playbook restore.yml -e backup=2026-11-05 --ask-become-pass   that day's backup
+#
+# Run site.yml first: it sets up Postgres, the backup image and the age key on the server.
+
+- name: Restore the databases from a backup
+  hosts: homeserver
+  gather_facts: false
+  vars:
+    restore_backup: "{{ backup | default('latest') }}"
+    restore_job_name: "restore-all-{{ lookup('ansible.builtin.pipe', 'date +%Y%m%d%H%M%S') }}"
+
+  tasks:
+    - name: Check the backup name
+      ansible.builtin.assert:
+        that: restore_backup == 'latest' or restore_backup is match('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        fail_msg: "backup must be latest or a date like 2026-11-05"
+        quiet: true
+
+    - name: Work out the backup image tag
+      ansible.builtin.include_role:
+        name: backups
+        tasks_from: facts.yml
+
+    - name: Run the restore
+      block:
+        - name: Start the restore job
+          kubernetes.core.k8s:
+            definition: "{{ lookup('ansible.builtin.template', 'roles/backups/templates/restore-job.yaml.j2') | ansible.builtin.from_yaml }}"
+            wait: true
+            wait_condition:
+              type: Complete
+              status: "True"
+            wait_timeout: 1800
+          delegate_to: localhost
+          become: false
+
+      always:
+        - name: Read the restore log
+          ansible.builtin.command: kubectl --namespace postgres logs job/{{ restore_job_name }}
+          register: restore_log
+          changed_when: false
+          failed_when: false
+          delegate_to: localhost
+          become: false
+
+        - name: Show the restore log
+          ansible.builtin.debug:
+            msg: "{{ restore_log.stdout_lines }}"

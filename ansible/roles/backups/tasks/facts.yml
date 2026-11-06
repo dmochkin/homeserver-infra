@@ -1,0 +1,9 @@
+# Shared by the backups role and restore.yml.
+
+- name: Work out the backup image tag
+  ansible.builtin.set_fact:
+    backup_image: "backup-tools:{{ (postgres_image ~ lookup('ansible.builtin.file', 'image/Dockerfile')
+      ~ lookup('ansible.builtin.file', 'image/backup-databases') ~ lookup('ansible.builtin.file', 'image/restore-check')
+      ~ lookup('ansible.builtin.file', 'image/restore-all')) | hash('sha256') | truncate(12, true, '') }}"
+    # The same age public key SOPS uses; only the public half is ever in the cluster.
+    age_recipient: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/../.sops.yaml') | from_yaml).creation_rules[0].age }}"

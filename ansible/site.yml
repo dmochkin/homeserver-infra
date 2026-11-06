@@ -37,4 +37,6 @@
     - k3s
     - platform
     - secrets
+    - postgres
+    - backups
     - runners

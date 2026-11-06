@@ -1,0 +1,38 @@
+#!/bin/sh
+# Rebuild restore: restores roles and every database from one backup. Databases that
+# already exist are skipped, so it never overwrites data.
+#
+#   restore-all            the newest daily backup
+#   restore-all 2026-11-05 the daily backup of that date
+#
+# Environment: as restore-check.
+set -eu -o pipefail
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+date=${1:-$(rclone lsf "r2:$BUCKET/daily/" --dirs-only | sort | tail -n 1 | tr -d /)}
+[ -n "$date" ] || { echo "No backups found in daily/"; exit 1; }
+echo "Restoring from daily/$date"
+rclone copy "r2:$BUCKET/daily/$date" "$work"
+[ -f "$work/globals.sql.age" ] || { echo "No backup for $date"; exit 1; }
+
+# Stop early with a clear message if the key can't decrypt this backup.
+age --decrypt --identity "$AGE_KEY_FILE" "$work/globals.sql.age" > /dev/null \
+  || { echo "Cannot decrypt the backup with $AGE_KEY_FILE (missing, unreadable or the wrong key)"; exit 1; }
+
+echo "Restoring roles"
+# Roles that already exist (such as postgres) report an error and are left as they are.
+age --decrypt --identity "$AGE_KEY_FILE" "$work/globals.sql.age" | psql --quiet --dbname postgres 2>&1 \
+  | grep -v "already exists" || true
+
+for dump in "$work"/*.dump.age; do
+  db=$(basename "$dump" .dump.age)
+  if [ "$(psql --tuples-only --no-align --dbname postgres --command "SELECT 1 FROM pg_database WHERE datname = '$db'")" = 1 ]; then
+    echo "  $db: already exists, skipped"
+    continue
+  fi
+  echo "  $db: restoring"
+  age --decrypt --identity "$AGE_KEY_FILE" "$dump" | pg_restore --create --dbname postgres --exit-on-error
+done
+echo "Restore from daily/$date done"

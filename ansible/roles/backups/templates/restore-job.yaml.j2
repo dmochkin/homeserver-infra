@@ -1,0 +1,13 @@
+# Managed by Ansible (restore.yml). A one-off job that restores every database from a backup.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ restore_job_name }}
+  namespace: postgres
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+{% set command = ["restore-all"] + ([restore_backup] if restore_backup != 'latest' else []) %}{% set with_key = true %}
+      {% filter indent(6) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}

@@ -1,0 +1,60 @@
+{# Pod spec shared by the backup, restore check and restore jobs. Set "command" and "with_key" before including. #}
+restartPolicy: Never
+securityContext:
+  seccompProfile:
+    type: RuntimeDefault
+  # rclone and age are Go programs; Go's runtime signals its own threads, which the
+  # default container profile blocks on Ubuntu 26.04 (see roles/k3s, homeserver-container).
+  appArmorProfile:
+    type: Localhost
+    localhostProfile: homeserver-container
+{% if with_key %}
+  # Root, to read the root-only age private key on the server.
+  runAsUser: 0
+{% else %}
+  runAsUser: 70
+  runAsGroup: 70
+  runAsNonRoot: true
+{% endif %}
+containers:
+  - name: backup
+    image: {{ backup_image }}
+    imagePullPolicy: Never
+    command: {{ command | to_json }}
+    envFrom:
+      - configMapRef:
+          name: backup-settings
+      - secretRef:
+          name: backup-storage
+    env:
+      - name: PGPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: postgres-superuser
+            key: POSTGRES_PASSWORD
+{% if with_key %}
+      - name: AGE_KEY_FILE
+        value: /age/keys.txt
+{% endif %}
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+{% if with_key %}
+    volumeMounts:
+      - name: age-key
+        mountPath: /age
+        readOnly: true
+volumes:
+  - name: age-key
+    hostPath:
+      path: /etc/homeserver/age
+      type: Directory
+{% endif %}

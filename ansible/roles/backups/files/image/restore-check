@@ -1,0 +1,41 @@
+#!/bin/sh
+# Monthly restore check: downloads the newest daily backup, checks that every dump
+# decrypts and is a readable Postgres archive, restores the canary database into a
+# scratch database and checks that all 100 rows came back. Exits non-zero on failure.
+#
+# Environment: as backup-databases, plus AGE_KEY_FILE (the age private key).
+set -eu -o pipefail
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"; dropdb --if-exists restore_check 2>/dev/null || true' EXIT
+
+latest=$(rclone lsf "r2:$BUCKET/daily/" --dirs-only | sort | tail -n 1)
+[ -n "$latest" ] || { echo "No backups found in daily/"; exit 1; }
+echo "Checking backup daily/$latest"
+rclone copy "r2:$BUCKET/daily/$latest" "$work"
+
+# Stop early with a clear message if the key can't decrypt this backup.
+age --decrypt --identity "$AGE_KEY_FILE" "$work/globals.sql.age" > /dev/null \
+  || { echo "Cannot decrypt the backup with $AGE_KEY_FILE (missing, unreadable or the wrong key)"; exit 1; }
+
+age --decrypt --identity "$AGE_KEY_FILE" "$work/globals.sql.age" | grep "CREATE ROLE" > /dev/null \
+  || { echo "globals.sql.age did not decrypt to a roles dump"; exit 1; }
+
+for dump in "$work"/*.dump.age; do
+  age --decrypt --identity "$AGE_KEY_FILE" "$dump" | pg_restore --list > /dev/null \
+    || { echo "$(basename "$dump") is not a readable backup"; exit 1; }
+  echo "  $(basename "$dump" .dump.age): readable"
+done
+
+echo "Restoring canary into a scratch database"
+dropdb --if-exists restore_check
+createdb restore_check
+age --decrypt --identity "$AGE_KEY_FILE" "$work/canary.dump.age" \
+  | pg_restore --dbname restore_check --no-owner --exit-on-error
+rows=$(psql --tuples-only --no-align --dbname restore_check --command "SELECT count(*) FROM canary")
+[ "$rows" = 100 ] || { echo "Expected 100 canary rows, found $rows"; exit 1; }
+
+if [ -n "${HEARTBEAT_URL:-}" ]; then
+  wget --quiet --output-document /dev/null "$HEARTBEAT_URL"
+fi
+echo "Restore check of daily/$latest passed: every dump readable, canary restored with $rows rows"
