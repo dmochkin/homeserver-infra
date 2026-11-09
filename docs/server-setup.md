@@ -114,6 +114,8 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
     | `r2_endpoint` | The R2 S3 endpoint, `https://<account-id>.r2.cloudflarestorage.com` |
     | `r2_bucket` | The backup bucket's name |
 
+    The Better Stack heartbeat URLs are added in "Monitoring" below.
+
 ## 6. Prepare GitHub runners
 
 Runners are registered by Ansible in step 7: for each repo listed in `runner_repos` (in `ansible/group_vars/all.yml`), it asks GitHub for a fresh registration token with `gh` on the admin machine. No token is stored.
@@ -148,11 +150,10 @@ The playbook does, in order:
 | docker | Docker from Ubuntu's packages (updated with the system), with log and build cache limits |
 | k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
 | platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine; its namespace sets default CPU and memory limits, because the chart ignores resource settings. The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
-| runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` |
+| runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` Each deploy pings the deploy heartbeat, or `<url>/fail` if it fails. |
 | postgres | Postgres 17 in namespace `postgres` (data on the server's disk); a `canary` database with 100 known rows for backup checks; a database and user for each app whose secrets include `DATABASE_PASSWORD` |
-| backups | Builds the backup image on the server; a nightly encrypted backup to R2 (03:00) and a monthly restore check (1st of the month, 05:00) |
+| backups | Builds the backup image on the server; a nightly encrypted backup to R2 (03:00) and a restore check on the 1st and 15th of each month (05:00). Each job pings its Better Stack heartbeat on success and `<url>/fail` on failure. |
 | secrets | Decrypts each `secrets/apps/<app>.enc.yaml` on the admin machine and applies it as the Kubernetes Secret `<app>-env` (restarting the app when it changes); copies the age private key to `/etc/homeserver/age/keys.txt` (root only) |
-| monitoring | Heartbeat URLs for jobs, backups and deploys |
 
 The playbook is safe to run again; a second run should report no changes.
 
@@ -227,6 +228,28 @@ GOOGLE_CLIENT_SECRET: "…"
 1. Create or edit the file: `sops secrets/apps/<app>.enc.yaml`. Quote every value; the playbook stops and names any value that is not a quoted string.
 2. In the app repo, set `envSecret: <app>-env` in `deploy/values.yaml`.
 3. Rerun step 7. Ansible applies the file as the Kubernetes Secret `<app>-env` in the app's namespace and restarts the app if the secrets changed.
+
+## Monitoring
+
+Better Stack checks the status page and receives heartbeats from the scheduled jobs and deploys. On the free plan, alerts go by email to the Better Stack account owner; sending them to the alerts Google Group needs the group as a team member, which needs a paid plan.
+
+1. Sign up for Better Stack (free plan: 10 monitors and heartbeats combined, email alerts to the account owner).
+2. Create an uptime monitor for `https://status.<domain>`.
+3. Create these heartbeats and copy each one's secret URL:
+
+    | Heartbeat | Expected period | Grace period | Field in `secrets/prod.enc.yaml` |
+    | --- | --- | --- | --- |
+    | Nightly backup | 1 day | 2 hours | `heartbeat_backup_url` |
+    | Restore check (1st and 15th) | 14 days | 3 days (the gap after the 15th can be up to 17 days) | `heartbeat_restore_check_url` |
+    | Deploys (optional, not used) | — | — | `heartbeat_deploy_url` |
+
+4. Add the URLs with `sops secrets/prod.enc.yaml` and rerun step 7.
+
+Each job pings its URL when it succeeds and `<url>/fail` when it fails, so a failure alerts at once; a job that does not run at all alerts when its period and grace run out. Fields left out mean that job sends no heartbeat.
+
+Deploys have no heartbeat: they do not run on a schedule, so any period would raise false "missed" alerts. A failed deploy fails its GitHub Actions run, and GitHub emails the person who pushed the tag (GitHub **Settings → Notifications → GitHub Actions**: email, failed workflows). `homeserver-deploy` still pings `heartbeat_deploy_url` if one is set.
+
+An app's own scheduled jobs report the same way: add the heartbeat URL to the app's secrets file (for example `NIGHTLY_SYNC_HEARTBEAT_URL`) and have the job request it when it finishes, and `<url>/fail` when it fails.
 
 ## Routine operations
 

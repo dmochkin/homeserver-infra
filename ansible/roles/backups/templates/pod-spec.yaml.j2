@@ -1,4 +1,4 @@
-{# Pod spec shared by the backup, restore check and restore jobs. Set "command" and "with_key" before including. #}
+{# Pod spec shared by the backup, restore check and restore jobs. Set "command", "with_key" and "heartbeat_key" (or none) before including. #}
 restartPolicy: Never
 securityContext:
   seccompProfile:
@@ -32,6 +32,15 @@ containers:
           secretKeyRef:
             name: postgres-superuser
             key: POSTGRES_PASSWORD
+{% if heartbeat_key %}
+      # Better Stack heartbeat; left unset if no URL is configured for this job.
+      - name: HEARTBEAT_URL
+        valueFrom:
+          secretKeyRef:
+            name: heartbeats
+            key: {{ heartbeat_key }}
+            optional: true
+{% endif %}
 {% if with_key %}
       - name: AGE_KEY_FILE
         value: /age/keys.txt

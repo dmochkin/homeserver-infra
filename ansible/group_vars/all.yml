@@ -18,8 +18,6 @@ service_network: 10.43.0.0/16
 cloudflared_chart_version: 0.1.2
 cloudflared_version: "2026.10.7"
 
-# Hello-world status page at status.<domain>.
-status_page_image: nginxinc/nginx-unprivileged:1.30.6-alpine
 
 # Deploy by tag: Helm on the server, and one GitHub Actions runner per app repo.
 helm_version: v4.3.1
@@ -37,6 +35,8 @@ postgres_storage: 20Gi
 
 # Backups: nightly encrypted dumps to Cloudflare R2, kept 7 days (daily) and 28 days (weekly).
 backup_schedule: "0 3 * * *"
-restore_check_schedule: "0 5 1 * *"
+# About every two weeks: the 1st and 15th at 05:00 (gaps of 14 to 17 days).
+# Its Better Stack heartbeat: period 14 days, grace 3 days.
+restore_check_schedule: "0 5 1,15 * *"
 backup_keep_daily: 7d
 backup_keep_weekly: 28d

@@ -1,4 +1,4 @@
-# Nightly encrypted backups to Cloudflare R2, a monthly restore check, and the
+# Nightly encrypted backups to Cloudflare R2, a twice-monthly restore check, and the
 # image both run in. The image tag changes whenever its files or Postgres change.
 
 - name: Work out the backup image tag and the age public key
@@ -60,7 +60,29 @@
 
 # Rendered with the template lookup (not the module's template option) so the
 # shared pod-spec.yaml.j2 include is found in this role's templates folder.
-- name: Schedule the nightly backup and the monthly restore check
+# Better Stack heartbeat URLs are secret; each is optional (heartbeat_backup_url,
+# heartbeat_restore_check_url in secrets/prod.enc.yaml).
+- name: Store the heartbeat URLs for the backup jobs
+  kubernetes.core.k8s:
+    definition:
+      apiVersion: v1
+      kind: Secret
+      type: Opaque
+      metadata:
+        name: heartbeats
+        namespace: postgres
+      # Only the URLs that are set; a job without one simply sends no heartbeat.
+      data: "{{ dict(configured | map(attribute='key') | zip(configured | map(attribute='value') | map('b64encode'))) }}"
+  vars:
+    configured: >-
+      {{ {'BACKUP': secrets.heartbeat_backup_url | default(''),
+          'RESTORE_CHECK': secrets.heartbeat_restore_check_url | default('')}
+         | dict2items | selectattr('value') | list }}
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Schedule the nightly backup and the twice-monthly restore check
   kubernetes.core.k8s:
     definition: "{{ lookup('ansible.builtin.template', 'backups.yaml.j2') | ansible.builtin.from_yaml_all | list }}"
   delegate_to: localhost

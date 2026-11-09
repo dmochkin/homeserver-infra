@@ -1,5 +1,5 @@
 #!/bin/sh
-# Monthly restore check: downloads the newest daily backup, checks that every dump
+# Twice-monthly restore check: downloads the newest daily backup, checks that every dump
 # decrypts and is a readable Postgres archive, restores the canary database into a
 # scratch database and checks that all 100 rows came back. Exits non-zero on failure.
 #
@@ -7,7 +7,18 @@
 set -eu -o pipefail
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"; dropdb --if-exists restore_check 2>/dev/null || true' EXIT
+
+# On exit: remove the work folder and the scratch database and, if the check failed,
+# report it at once (HEARTBEAT_URL/fail) instead of waiting for the missed heartbeat.
+finish() {
+  status=$?
+  rm -rf "$work"
+  dropdb --if-exists restore_check 2>/dev/null || true
+  if [ "$status" -ne 0 ] && [ -n "${HEARTBEAT_URL:-}" ]; then
+    wget --quiet --output-document /dev/null "$HEARTBEAT_URL/fail" || true
+  fi
+}
+trap finish EXIT
 
 latest=$(rclone lsf "r2:$BUCKET/daily/" --dirs-only | sort | tail -n 1)
 [ -n "$latest" ] || { echo "No backups found in daily/"; exit 1; }
