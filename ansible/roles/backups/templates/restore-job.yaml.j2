@@ -9,5 +9,5 @@ spec:
   ttlSecondsAfterFinished: 86400
   template:
     spec:
-{% set command = ["restore-all"] + ([restore_backup] if restore_backup != 'latest' else []) %}{% set with_key = true %}
+{% set command = ["restore-all"] + ([restore_backup] if restore_backup != 'latest' else []) %}{% set with_key = true %}{% set heartbeat_key = none %}
       {% filter indent(6) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}

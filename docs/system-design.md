@@ -48,7 +48,7 @@ flowchart LR
 | SOPS + age | Secrets encrypted in this repo; decrypted only at deploy time |
 | Tailscale | Private network for admin access from the Mac, Windows PC and phone |
 | Better Stack | External uptime checks and scheduled-job heartbeats; alerts by email |
-| Alerts Google Group | One address every tool sends alerts to; members managed in the group |
+| Alerts Google Group | Address for tools that can send to any address; Better Stack's free plan alerts only the account owner, so its alerts go there directly |
 
 ## Request flow
 
@@ -80,7 +80,7 @@ The home router has no port forwarding. The home IP address is never exposed.
     3. Imports it into k3s through a root helper that accepts only images named after the app.
     4. Runs `helm upgrade` with the shared chart, the app's `deploy/values.yaml`, and the image and domain set on the server; a failed upgrade is rolled back.
     5. Removes all but the last 3 images of that app.
-    6. Sends a deploy heartbeat (added in the monitoring step).
+    6. Pings the deploy heartbeat if one is set (`<url>/fail` if any step failed). Without one, a failed deploy is reported by GitHub's failed-workflow email.
 7. Rollback: redeploy one of the 3 kept tags.
 
 Self-hosted runners act only on trusted events: release tags pushed by the owner. Pull request tests, including from forks, run only on GitHub-hosted runners, and fork pull requests need approval.
@@ -97,7 +97,7 @@ Self-hosted runners act only on trusted events: release tags pushed by the owner
 
 - Kubernetes CronJobs with `timeZone: America/Toronto`, so daylight saving time is handled.
 - `concurrencyPolicy: Forbid`, so runs never overlap.
-- Each job pings its Better Stack heartbeat on success. A missed ping sends an alert.
+- Each job pings its Better Stack heartbeat on success and `<url>/fail` on failure. A failure alerts at once; a missed ping alerts when its period and grace run out.
 
 ## Data and backups
 
@@ -105,7 +105,7 @@ Self-hosted runners act only on trusted events: release tags pushed by the owner
 - A `canary` database holds 100 known rows, so backups and restore checks always have real data to verify.
 - Every night at 03:00 a job dumps the roles and each database, encrypting each dump with the age public key as it is written (no plaintext on disk), and uploads it to R2 under `daily/<date>/`; on Sundays also under `weekly/<date>/`.
 - Retention: daily copies are kept 7 days and weekly copies 28 days (about 4).
-- On the 1st of each month at 05:00, a restore check downloads the newest backup, decrypts it with the server's age key, checks every dump is readable and restores `canary` into a scratch database, expecting 100 rows. It fails loudly on any problem.
+- On the 1st and 15th of each month at 05:00, a restore check downloads the newest backup, decrypts it with the server's age key, checks every dump is readable and restores `canary` into a scratch database, expecting 100 rows. It fails loudly on any problem.
 - A restore test runs before go-live. A rebuild restores everything with `restore.yml`.
 
 ## Secrets
@@ -134,10 +134,11 @@ Self-hosted runners act only on trusted events: release tags pushed by the owner
 
 | Check | Source | Alert |
 | --- | --- | --- |
-| Site up | Better Stack polls each public URL | Email to the alerts group |
-| Scheduled job ran | Job pings its heartbeat | Missed ping → email |
-| Backup ran | Backup job pings its heartbeat | Missed ping → email |
-| Deploy succeeded | Runner pings its heartbeat | Failure → email |
+| Site up | Better Stack polls each public URL | Email to the Better Stack account owner |
+| Scheduled job ran | Job pings its heartbeat (`/fail` on failure) | Failure or missed ping → email |
+| Backup ran | Backup job pings its heartbeat (`/fail` on failure) | Failure or missed ping → email |
+| Restore check passed | Twice-monthly restore check pings its heartbeat (`/fail` on failure) | Failure or missed ping → email |
+| Deploy succeeded | The app's deploy workflow run (a failed deploy fails the run; Helm rolls back) | GitHub emails the person who pushed the tag |
 
 ## Failure and recovery
 

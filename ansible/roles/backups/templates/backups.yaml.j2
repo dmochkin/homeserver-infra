@@ -30,7 +30,7 @@ spec:
       backoffLimit: 1
       template:
         spec:
-{% set command = ["backup-databases"] %}{% set with_key = false %}
+{% set command = ["backup-databases"] %}{% set heartbeat_key = "BACKUP" %}{% set with_key = false %}
           {% filter indent(10) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}
 ---
 apiVersion: batch/v1
@@ -49,5 +49,5 @@ spec:
       backoffLimit: 0
       template:
         spec:
-{% set command = ["restore-check"] %}{% set with_key = true %}
+{% set command = ["restore-check"] %}{% set heartbeat_key = "RESTORE_CHECK" %}{% set with_key = true %}
           {% filter indent(10) %}{% include 'pod-spec.yaml.j2' %}{% endfilter %}

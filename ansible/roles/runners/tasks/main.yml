@@ -90,6 +90,23 @@
     mode: "0640"
   diff: false
 
+- name: Save the deploy heartbeat URL for the deploy script
+  ansible.builtin.copy:
+    content: "{{ secrets.heartbeat_deploy_url }}\n"
+    dest: /etc/homeserver/deploy-heartbeat-url
+    owner: root
+    group: github-runner
+    mode: "0640"
+  diff: false
+  no_log: true
+  when: secrets.heartbeat_deploy_url is defined
+
+- name: Remove the deploy heartbeat URL when none is set
+  ansible.builtin.file:
+    path: /etc/homeserver/deploy-heartbeat-url
+    state: absent
+  when: secrets.heartbeat_deploy_url is not defined
+
 - name: Install the shared Helm chart
   ansible.builtin.copy:
     src: "{{ playbook_dir }}/../charts/app"

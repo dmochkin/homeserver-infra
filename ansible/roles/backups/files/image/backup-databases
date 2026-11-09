@@ -11,7 +11,17 @@ set -eu -o pipefail
 
 day=$(date +%F)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+
+# On exit: remove the work folder and, if the backup failed, report it at once
+# (HEARTBEAT_URL/fail) instead of waiting for the missed heartbeat.
+finish() {
+  status=$?
+  rm -rf "$work"
+  if [ "$status" -ne 0 ] && [ -n "${HEARTBEAT_URL:-}" ]; then
+    wget --quiet --output-document /dev/null "$HEARTBEAT_URL/fail" || true
+  fi
+}
+trap finish EXIT
 
 echo "Backing up roles and settings"
 pg_dumpall --globals-only | age --recipient "$AGE_RECIPIENT" > "$work/globals.sql.age"

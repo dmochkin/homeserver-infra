@@ -21,6 +21,20 @@ app=$1 tag=$2 src=$3
 domain=$(cat /etc/homeserver/domain)
 chart=/opt/homeserver/charts/app
 
+# Report every deploy to the Better Stack deploy heartbeat, if one is set up:
+# the URL on success, URL/fail on failure.
+heartbeat_file=/etc/homeserver/deploy-heartbeat-url
+report() {
+  status=$?
+  if [ -r "$heartbeat_file" ]; then
+    url=$(cat "$heartbeat_file")
+    [ "$status" -eq 0 ] || url="$url/fail"
+    curl --fail --silent --show-error --max-time 10 --retry 2 --output /dev/null "$url" \
+      || echo "homeserver-deploy: could not reach the deploy heartbeat" >&2
+  fi
+}
+trap report EXIT
+
 # One build at a time across all apps, so builds don't compete with each other for memory.
 exec 9>/var/lib/homeserver-deploy/build.lock
 echo "Waiting for the build lock"
