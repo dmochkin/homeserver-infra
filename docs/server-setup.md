@@ -99,7 +99,7 @@ After step 7 the firewall allows SSH only over Tailscale, so an entry that point
 ## 5. Prepare Cloudflare
 
 1. **Tunnel:** in the Cloudflare dashboard, go to **Networking → Tunnels** and select **Create a tunnel** (name it, for example, `homeserver`). Don't run the install command it offers; cloudflared runs in the cluster. To get the token of an existing tunnel, open it, select **Add a replica** on the **Overview** tab, and copy the `eyJ…` string from the command. **Refresh token** on the same tab replaces a leaked token.
-2. **Routes:** on the tunnel's **Routes** tab, for each app select **Add route → Published application**: subdomain `<app>`, your domain, service URL `http://traefik.kube-system.svc.cluster.local:80`. The first route is `status`, for the hello-world status page.
+2. **Routes:** on the tunnel's **Routes** tab, for each app subdomain select **Add route → Published application**: the subdomain, your domain, service URL `http://traefik.kube-system.svc.cluster.local:80`. Every route points at Traefik, which picks the app by host name. The first route is `status`, for the hello-world status page.
 3. **R2:** under **R2 Object Storage**, create a bucket for backups. Then create an API token with **Object Read & Write** permission for that bucket only. Note its access key ID, secret access key and the S3 endpoint (`https://<account-id>.r2.cloudflarestorage.com`).
 4. Add the values to `secrets/prod.enc.yaml` (see "Secrets" below). On first setup, create the age key first.
 
@@ -150,7 +150,7 @@ The playbook does, in order:
 | docker | Docker from Ubuntu's packages (updated with the system), with log and build cache limits |
 | k3s | Single-node k3s (pinned version) with secrets encryption at rest; Kubernetes API reachable only over Tailscale; no built-in load balancer and Traefik reachable only inside the cluster, so no ports open on the host; writes `~/.kube/config` on the admin machine, pointed at the server's Tailscale name |
 | platform | cloudflared, installed with Cloudflare's Helm chart from the admin machine; its namespace sets default CPU and memory limits, because the chart ignores resource settings. The status page at `status.<domain>` is the hello-world app repo, deployed by tag. |
-| runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos` Each deploy pings the deploy heartbeat, or `<url>/fail` if it fails. |
+| runners | Helm on the server; the shared chart in `/opt/homeserver/charts/app`; the `homeserver-deploy` script (build lock, build, import, `helm upgrade`, keep 3 images); a `github-runner` user in the `docker` group, allowed to run only the image helper as root; one GitHub Actions runner service per repo in `runner_repos`. Each deploy pings the deploy heartbeat, or `<url>/fail` if it fails. |
 | postgres | Postgres 17 in namespace `postgres` (data on the server's disk); a `canary` database with 100 known rows for backup checks; a database and user for each app whose secrets include `DATABASE_PASSWORD` |
 | backups | Builds the backup image on the server; a nightly encrypted backup to R2 (03:00) and a restore check on the 1st and 15th of each month (05:00). Each job pings its Better Stack heartbeat on success and `<url>/fail` on failure. |
 | secrets | Decrypts each `secrets/apps/<app>.enc.yaml` on the admin machine and applies it as the Kubernetes Secret `<app>-env` (restarting the app when it changes); copies the age private key to `/etc/homeserver/age/keys.txt` (root only) |
@@ -231,10 +231,10 @@ GOOGLE_CLIENT_SECRET: "…"
 
 ## Monitoring
 
-Better Stack checks the status page and receives heartbeats from the scheduled jobs and deploys. On the free plan, alerts go by email to the Better Stack account owner; sending them to the alerts Google Group needs the group as a team member, which needs a paid plan.
+Better Stack checks each public address and receives heartbeats from the scheduled jobs and deploys. On the free plan, alerts go by email to the Better Stack account owner; sending them to the alerts Google Group needs the group as a team member, which needs a paid plan.
 
 1. Sign up for Better Stack (free plan: 10 monitors and heartbeats combined, email alerts to the account owner).
-2. Create an uptime monitor for `https://status.<domain>`.
+2. Create an uptime monitor for `https://status.<domain>`, and one for each app subdomain (see "Add an app").
 3. Create these heartbeats and copy each one's secret URL:
 
     | Heartbeat | Expected period | Grace period | Field in `secrets/prod.enc.yaml` |
@@ -251,12 +251,43 @@ Deploys have no heartbeat: they do not run on a schedule, so any period would ra
 
 An app's own scheduled jobs report the same way: add the heartbeat URL to the app's secrets file (for example `NIGHTLY_SYNC_HEARTBEAT_URL`) and have the job request it when it finishes, and `<url>/fail` when it fails.
 
+## Add an app
+
+An app repo needs `Dockerfile`, `deploy/values.yaml` and the deploy and test workflows; copy them from the hello-world repo and change the app name in the deploy workflow.
+
+1. In the app repo's `deploy/values.yaml`, set:
+
+    | Setting | Purpose |
+    | --- | --- |
+    | `subdomain` | The app's address, `https://<subdomain>.<domain>` |
+    | `extraSubdomains` | More addresses for the same app, one per line (optional) |
+    | `port`, `healthPath` | Where the container listens and the path that answers 200 when ready |
+    | `resources` | Requests and limits for each container; also the namespace's defaults |
+    | `namespaceLimits` | CPU and memory limit for the whole namespace; leave room for a second pod during a rolling update |
+
+    The deploy script creates the namespace on the first deploy and applies these limits to it. For an nginx static site, the hello-world values fit: requests `10m` CPU and `16Mi` memory, limits `100m` and `64Mi`, namespace `500m` and `256Mi`.
+
+2. Add the repo's name to `runner_repos` in `ansible/group_vars/all.yml`. If the app has secrets, add them (see "App secrets").
+3. Rerun step 7. Ansible gets a registration token with `gh` and registers the runner as a service; no token is stored. The runner then shows **Idle** in the repo's **Settings → Actions → Runners**.
+4. In Cloudflare, add a tunnel route for each subdomain (see step 5).
+5. In Better Stack, add an uptime monitor for each address, `https://<subdomain>.<domain>`.
+6. Push a release tag in the app repo.
+
+### Move a subdomain to another app
+
+Every tunnel route points at Traefik, so Cloudflare needs no change.
+
+1. In the app that gives up the subdomain, delete its line from `subdomain` or `extraSubdomains` and deploy a new tag.
+2. In the app that takes it, add it to `subdomain` or `extraSubdomains` and deploy a new tag.
+
+Do step 1 first: while two apps claim the same host name, Traefik's choice between them is not defined.
+
 ## Routine operations
 
 | Task | How |
 | --- | --- |
 | Update the server config | Change the playbook, open a PR, merge, rerun step 7 |
-| Add a new app | In the app repo, add `deploy/values.yaml` and the deploy and test workflows (copy them from the hello-world repo). Add the repo to `runner_repos`, add its secrets if it has any (see "App secrets"), rerun step 7, add a Cloudflare route for its subdomain, then push a release tag. |
+| Add a new app | See "Add an app" |
 | Back up now | `kubectl -n postgres create job --from=cronjob/backup-databases backup-now`, then `kubectl -n postgres logs -f job/backup-now` |
 | Check a restore now | `kubectl -n postgres create job --from=cronjob/restore-check restore-check-now`, then `kubectl -n postgres logs -f job/restore-check-now` |
 | Give an app a database | Add `DATABASE_PASSWORD` to its `secrets/apps/<app>.enc.yaml` and rerun step 7. The database and user are named after the app, with dashes as underscores (`plan-scheme` → `plan_scheme`); the app connects to `postgres.postgres.svc:5432`. |

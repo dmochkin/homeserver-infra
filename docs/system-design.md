@@ -38,7 +38,7 @@ flowchart LR
 | --- | --- |
 | Home server | Asus Chromebox 3 (CN65): i7-8550U (4 cores / 8 threads), 16 GB RAM, SATA SSD, MrChromebox UEFI firmware; Ubuntu Server 26.04 LTS |
 | k3s | Single-node Kubernetes; secrets encrypted at rest |
-| Traefik | Ingress built into k3s; routes each subdomain to its app; reachable only inside the cluster |
+| Traefik | Ingress built into k3s; routes each subdomain to its app (an app can have several subdomains); reachable only inside the cluster |
 | cloudflared | Outbound tunnel from the server to Cloudflare; replaces open ports and on-server certificates |
 | Cloudflare | DNS for the domain, proxy, HTTPS for visitors, R2 object storage for backups |
 | Postgres 17 | One shared instance; one database and one user per app |

@@ -9,6 +9,11 @@ domain: ""
 
 # The app is served at https://<subdomain>.<domain>. Empty: no web address (for example, jobs only).
 subdomain: ""
+# More subdomains served by the same app, one per line. Moving one of them to another app
+# means deleting its line here and adding it to the other app's values.
+#   extraSubdomains:
+#     - other-name
+extraSubdomains: []
 # Port the app listens on inside its container.
 port: 8080
 # Path that answers 200 when the app is ready.
