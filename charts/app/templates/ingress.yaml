@@ -1,4 +1,6 @@
-{{- if .Values.subdomain }}
+{{- $subdomains := compact (prepend .Values.extraSubdomains .Values.subdomain) | uniq }}
+{{- if $subdomains }}
+{{- $domain := required "domain is set by the deploy script" .Values.domain }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -8,14 +10,16 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: {{ .Values.subdomain }}.{{ required "domain is set by the deploy script" .Values.domain }}
+    {{- range $subdomains }}
+    - host: {{ . }}.{{ $domain }}
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: {{ .Release.Name }}
+                name: {{ $.Release.Name }}
                 port:
                   name: http
+    {{- end }}
 {{- end }}

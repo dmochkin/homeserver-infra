@@ -28,6 +28,7 @@ runner_checksum: sha256:baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d55583
 # App repos that deploy to this server, by name. The GitHub account comes from `gh` on the admin machine.
 runner_repos:
   - hello-world
+  - people-recommend-mvp
 
 # Postgres 17: one shared instance, one database and user per app.
 postgres_image: postgres:17.9-alpine3.23
